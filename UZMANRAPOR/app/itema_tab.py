@@ -705,7 +705,7 @@ class ItemaAyarTab(QWidget):
                 pass
 
     def _save_manual_settings(self, conn: ConnectionLike, values: Dict[str, str]) -> None:
-        table = "dbo.ItemaAyar"
+        table = "[UzmanRaporDB].[dbo].[ItemaAyar]"
 
         # sira_no identity => asla insert/update listesine koyma
         cols = [c for c in ITEMA_COLUMNS if c.lower() != "sira_no"]

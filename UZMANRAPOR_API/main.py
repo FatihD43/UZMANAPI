@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 
 app = FastAPI(title="UzmanRapor API", version="1.0")
-MAX_ROWS = int(_env("UZMANRAPOR_MAX_ROWS", "20000"))
+
 
 
 
@@ -24,7 +24,7 @@ def _env(name: str, default: str = "") -> str:
     v = os.getenv(name)
     return v.strip() if v else default
 
-
+MAX_ROWS = int(_env("UZMANRAPOR_MAX_ROWS", "20000"))
 def _require_token(x_token: str | None) -> None:
     expected = _env("UZMANRAPOR_API_TOKEN", "").strip()
 
@@ -79,32 +79,42 @@ _FORBIDDEN = re.compile(
 )
 
 
-_ALLOWED_OBJECTS = {
-    # core
-    "dbo.AppMeta",
-    "dbo.Snapshots",
-    "dbo.NoteRules",
-    "dbo.AppUsers",
-    "dbo.AppLookupValues",
-    "dbo.UstaDefteri",
-    "dbo.TipBuzulmeModel",
-    "dbo.LoomCutMap",
-    "dbo.TypeSelvedgeMap",
-    "dbo.BlockedLooms",
-    "dbo.DummyLooms",
-    # itema
-    "dbo.ItemaAyar",
+_DB_NAME = os.getenv("UZMANRAPOR_SQL_DATABASE", "UzmanRaporDB").strip() or "UzmanRaporDB"
+
+_ALLOWED_TABLES = {
+    "AppLookupValues",
+    "AppMeta",
+    "AppUsers",
+    "BlockedLooms",
+    "DummyLooms",
+    "ItemaAyar",
+    "LoomCutMap",
+    "Makine_Ayar_Tablosu",
+    "Snapshots",
+    "TipBuzulmeModel",
+    "TypeSelvedgeMap",
+    "UstaDefteri",
 }
+
+_ALLOWED_OBJECTS = {f"dbo.{t}" for t in _ALLOWED_TABLES} | {f"{_DB_NAME}.dbo.{t}" for t in _ALLOWED_TABLES}
 
 _ALLOWED_PROCS = {
     "dbo.sp_ItemaOtomatikAyar",
     "dbo.sp_ItemaTipOzelAyar",
+    f"{_DB_NAME}.dbo.sp_ItemaOtomatikAyar",
+    f"{_DB_NAME}.dbo.sp_ItemaTipOzelAyar",
 }
 
-# yakalanacak obje referansları: dbo.X
-_OBJ_REF = re.compile(r"\b(?:\[?dbo\]?\.)\[?(\w+)\]?\b", re.IGNORECASE)
-# exec dbo.sp_x
-_EXEC_REF = re.compile(r"\bexec\s+(dbo\.(\w+))\b", re.IGNORECASE)
+# yakalanacak obje referansları: dbo.X veya [db].[dbo].[X]
+_OBJ_REF = re.compile(
+    r"\b(?:(?:\[?(?P<db>\w+)\]?\.)?\[?dbo\]?\.)\[?(?P<table>\w+)\]?\b",
+    re.IGNORECASE,
+)
+# exec dbo.sp_x veya exec [db].[dbo].[sp_x]
+_EXEC_REF = re.compile(
+    r"\bexec\s+(?:(?P<db>\[?\w+\]?)\.)?\[?dbo\]?\.\[?(?P<proc>\w+)\]?\b",
+    re.IGNORECASE,
+)
 
 
 def _validate_query(query: str) -> None:
@@ -123,7 +133,14 @@ def _validate_query(query: str) -> None:
         raise HTTPException(status_code=403, detail="Only SELECT/INSERT/UPDATE/DELETE/EXEC are allowed")
 
     # obje whitelist kontrolü
-    objs = {f"dbo.{m.group(1)}" for m in _OBJ_REF.finditer(q)}
+    objs: set[str] = set()
+    for m in _OBJ_REF.finditer(q):
+        table = m.group("table")
+        db = m.group("db")
+        if db:
+            objs.add(f"{db}.dbo.{table}")
+        else:
+            objs.add(f"dbo.{table}")
     for obj in objs:
         if obj not in _ALLOWED_OBJECTS and obj not in _ALLOWED_PROCS:
             raise HTTPException(status_code=403, detail=f"Object not allowed: {obj}")
@@ -132,9 +149,17 @@ def _validate_query(query: str) -> None:
         m = _EXEC_REF.search(q)
         if not m:
             raise HTTPException(status_code=403, detail="EXEC only allowed for dbo stored procedures")
-        proc = m.group(1)
-        if proc not in _ALLOWED_PROCS:
-            raise HTTPException(status_code=403, detail=f"Procedure not allowed: {proc}")
+        db = m.group("db")
+        proc = m.group("proc")
+        if db:
+            db_name = db.strip("[]")
+            qualified = f"{db_name}.dbo.{proc}"
+            if qualified not in _ALLOWED_PROCS:
+                raise HTTPException(status_code=403, detail=f"Procedure not allowed: {qualified}")
+        else:
+            unqualified = f"dbo.{proc}"
+            if unqualified not in _ALLOWED_PROCS:
+                raise HTTPException(status_code=403, detail=f"Procedure not allowed: {unqualified}")
 
 
 def _adapt_params(query: str, params: list[Any]) -> list[Any]:

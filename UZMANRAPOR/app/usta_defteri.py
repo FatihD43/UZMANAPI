@@ -125,7 +125,7 @@ class UstaDefteriWidget(QWidget):
     def _fetch_lookup_rows(self, list_name: str) -> List[Dict[str, object]]:
         sql = """
         SELECT Id, Value
-        FROM dbo.AppLookupValues
+        FROM [UzmanRaporDB].[dbo].[AppLookupValues]
         WHERE ListName = ? AND IsActive = 1
         ORDER BY SortOrder, Value;
         """
@@ -146,7 +146,7 @@ class UstaDefteriWidget(QWidget):
         with self._conn() as c:
             cur = c.cursor()
             cur.execute(
-                "SELECT 1 FROM dbo.AppLookupValues WHERE ListName = ? AND Value = ?;",
+                "SELECT 1 FROM [UzmanRaporDB].[dbo].[AppLookupValues] WHERE ListName = ? AND Value = ?;",
                 (list_name, value),
             )
             exists = cur.fetchone() is not None
@@ -154,7 +154,7 @@ class UstaDefteriWidget(QWidget):
                 return
 
             cur.execute(
-                "INSERT INTO dbo.AppLookupValues (ListName, Value, IsActive, SortOrder, CreatedBy) "
+                "INSERT INTO [UzmanRaporDB].[dbo].[AppLookupValues] (ListName, Value, IsActive, SortOrder, CreatedBy) "
                 "VALUES (?, ?, 1, 0, ?);",
                 (list_name, value, created_by),
             )
@@ -165,7 +165,7 @@ class UstaDefteriWidget(QWidget):
         if not new_value:
             return
         sql = """
-        UPDATE dbo.AppLookupValues
+        UPDATE [UzmanRaporDB].[dbo].[AppLookupValues]
         SET Value = ?, UpdatedAt = SYSDATETIME(), UpdatedBy = ?
         WHERE Id = ?;
         """
@@ -176,7 +176,7 @@ class UstaDefteriWidget(QWidget):
 
     def _deactivate_lookup_value(self, row_id: int, updated_by: str = "UI") -> None:
         sql = """
-        UPDATE dbo.AppLookupValues
+        UPDATE [UzmanRaporDB].[dbo].[AppLookupValues]
         SET IsActive = 0, UpdatedAt = SYSDATETIME(), UpdatedBy = ?
         WHERE Id = ?;
         """
@@ -518,7 +518,7 @@ class UstaDefteriWidget(QWidget):
 
         cols = list(mapped.keys())
         placeholders = ",".join("?" for _ in cols)
-        sql = f"INSERT INTO dbo.UstaDefteri ({','.join(cols)}) VALUES ({placeholders})"
+        sql = f"INSERT INTO [UzmanRaporDB].[dbo].[UstaDefteri] ({','.join(cols)}) VALUES ({placeholders})"
 
         with self._conn() as c:
             cur = c.cursor()
@@ -528,7 +528,7 @@ class UstaDefteriWidget(QWidget):
     def _delete_by_rowid(self, rowid: int):
         with self._conn() as c:
             cur = c.cursor()
-            cur.execute("DELETE FROM dbo.UstaDefteri WHERE Id = ?", (rowid,))
+            cur.execute("DELETE FROM [UzmanRaporDB].[dbo].[UstaDefteri] WHERE Id = ?", (rowid,))
             c.commit()
 
     def _select(self, start: Optional[str] = None, end: Optional[str] = None,
@@ -550,7 +550,7 @@ class UstaDefteriWidget(QWidget):
             YapilanIslem AS [Yapılan işlem],
             IslemYapan AS [İşlem Yapan],
             Aciklama AS [Açıklama]
-        FROM dbo.UstaDefteri
+        FROM [UzmanRaporDB].[dbo].[UstaDefteri]
         WHERE 1 = 1
         """
         params: list[object] = []
@@ -797,7 +797,7 @@ class UstaDefteriWidget(QWidget):
                YapilanIslem AS [Yapılan işlem],
                IslemYapan AS [İşlem Yapan],
                Aciklama AS [Açıklama]
-        FROM dbo.UstaDefteri
+        FROM [UzmanRaporDB].[dbo].[UstaDefteri]
         ORDER BY Id DESC;
         """
         with self._conn() as c:
@@ -815,7 +815,7 @@ class UstaDefteriWidget(QWidget):
             return False
         with self._conn() as c:
             cur = c.cursor()
-            cur.execute("SELECT 1 FROM dbo.UstaDefteri WHERE EtiketNo = ?;", (etiket,))
+            cur.execute("SELECT 1 FROM [UzmanRaporDB].[dbo].[UstaDefteri] WHERE EtiketNo = ?;", (etiket,))
             return cur.fetchone() is not None
 
     def _configure_table_look(self):

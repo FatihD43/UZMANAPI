@@ -49,7 +49,7 @@ def _meta_get(key: str) -> str | None:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("SELECT MetaValue FROM dbo.AppMeta WHERE MetaKey = ?;", (key,))
+            cur.execute("SELECT MetaValue FROM [UzmanRaporDB].[dbo].[AppMeta] WHERE MetaKey = ?;", (key,))
             row = cur.fetchone()
         if not row:
             return None
@@ -70,7 +70,7 @@ def _meta_set(key: str, value: str | None) -> None:
             cur = c.cursor()
 
             cur.execute(
-                "UPDATE dbo.AppMeta SET MetaValue = ?, UpdatedAt = SYSUTCDATETIME() WHERE MetaKey = ?;",
+                "UPDATE [UzmanRaporDB].[dbo].[AppMeta] SET MetaValue = ?, UpdatedAt = SYSUTCDATETIME() WHERE MetaKey = ?;",
                 (value, key),
             )
 
@@ -79,7 +79,7 @@ def _meta_set(key: str, value: str | None) -> None:
 
             if rc == 0:
                 cur.execute(
-                    "INSERT INTO dbo.AppMeta (MetaKey, MetaValue, UpdatedAt) VALUES (?, ?, SYSUTCDATETIME());",
+                    "INSERT INTO [UzmanRaporDB].[dbo].[AppMeta] (MetaKey, MetaValue, UpdatedAt) VALUES (?, ?, SYSUTCDATETIME());",
                     (key, value),
                 )
 
@@ -223,7 +223,7 @@ def save_last_update(dt: datetime) -> None:
 
 # ============================================================
 #  SNAPSHOTS
-#  Not: API modunda DDL yok. dbo.Snapshots SSMS’de hazır olmalı.
+#  Not: API modunda DDL yok. [UzmanRaporDB].[dbo].[Snapshots] SSMS’de hazır olmalı.
 # ============================================================
 
 def _ensure_snapshot_table() -> None:
@@ -246,9 +246,9 @@ def save_df_snapshot(df: pd.DataFrame | None, which: str) -> None:
 
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("DELETE FROM dbo.Snapshots WHERE Name = ?;", (which,))
+            cur.execute("DELETE FROM [UzmanRaporDB].[dbo].[Snapshots] WHERE Name = ?;", (which,))
             cur.execute(
-                "INSERT INTO dbo.Snapshots (Name, DataHex) VALUES (?, ?);",
+                "INSERT INTO [UzmanRaporDB].[dbo].[Snapshots] (Name, DataHex) VALUES (?, ?);",
                 (which, hex_str),
             )
             c.commit()
@@ -262,7 +262,7 @@ def load_df_snapshot(which: str) -> pd.DataFrame | None:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("SELECT DataHex FROM dbo.Snapshots WHERE Name = ?;", (which,))
+            cur.execute("SELECT DataHex FROM [UzmanRaporDB].[dbo].[Snapshots] WHERE Name = ?;", (which,))
             row = cur.fetchone()
 
         if not row or row[0] is None:
@@ -297,7 +297,7 @@ def set_username_default(name: str) -> None:
 
 # ============================================================
 #  LOGIN SİSTEMİ – AppUsers (SQL)
-#  Not: API modunda DDL yok. dbo.AppUsers SSMS’de hazır olmalı.
+#   Not: API modunda DDL yok. [UzmanRaporDB].[dbo].[AppUsers] SSMS’de hazır olmalı.
 # ============================================================
 
 def hash_password(password: str, salt: str) -> str:
@@ -318,7 +318,7 @@ def ensure_user_db() -> None:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("SELECT COUNT(*) FROM dbo.AppUsers;")
+            cur.execute("SELECT COUNT(*) FROM [UzmanRaporDB].[dbo].[AppUsers];")
             row = cur.fetchone()
             count = int(row[0]) if row and row[0] is not None else 0
 
@@ -327,7 +327,7 @@ def ensure_user_db() -> None:
                 pwd_hash = hash_password("admin", salt)
                 perms = "admin,read,write"
                 cur.execute(
-                    "INSERT INTO dbo.AppUsers (Username, Salt, PasswordHash, Permissions, IsActive) "
+                    "INSERT INTO [UzmanRaporDB].[dbo].[AppUsers] (Username, Salt, PasswordHash, Permissions, IsActive) "
                     "VALUES (?, ?, ?, ?, 1);",
                     ("admin", salt, pwd_hash, perms),
                 )
@@ -345,7 +345,7 @@ def load_users() -> list[dict]:
             cur = c.cursor()
             cur.execute(
                 "SELECT Username, Salt, PasswordHash, Permissions, IsActive, CreatedAt "
-                "FROM dbo.AppUsers;"
+                "FROM [UzmanRaporDB].[dbo].[AppUsers];"
             )
             rows = cur.fetchall()
 
@@ -396,7 +396,7 @@ def save_users(users: list[dict]) -> None:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("DELETE FROM dbo.AppUsers;")
+            cur.execute("DELETE FROM [UzmanRaporDB].[dbo].[AppUsers];")
 
             for u in users:
                 username = str(u.get("username", "")).strip()
@@ -411,7 +411,7 @@ def save_users(users: list[dict]) -> None:
                 is_active_bit = 1 if u.get("is_active", True) else 0
 
                 cur.execute(
-                    "INSERT INTO dbo.AppUsers (Username, Salt, PasswordHash, Permissions, IsActive) "
+                    "INSERT INTO [UzmanRaporDB].[dbo].[AppUsers] (Username, Salt, PasswordHash, Permissions, IsActive) "
                     "VALUES (?, ?, ?, ?, ?);",
                     (username, salt, pwd_hash, perms_raw, is_active_bit),
                 )
@@ -428,7 +428,7 @@ def find_user(username: str) -> dict | None:
             cur = c.cursor()
             cur.execute(
                 "SELECT Username, Salt, PasswordHash, Permissions, IsActive, CreatedAt "
-                "FROM dbo.AppUsers WHERE Username = ?;",
+                "FROM [UzmanRaporDB].[dbo].[AppUsers] WHERE Username = ?;",
                 (username,),
             )
             row = cur.fetchone()
@@ -482,7 +482,7 @@ def load_blocked_looms() -> list[str]:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("SELECT LoomNo FROM dbo.BlockedLooms ORDER BY LoomNo;")
+            cur.execute("SELECT LoomNo FROM [UzmanRaporDB].[dbo].[BlockedLooms] ORDER BY LoomNo;")
             rows = cur.fetchall()
         return [str(r[0]) for r in rows]
     except Exception:
@@ -495,9 +495,9 @@ def save_blocked_looms(items: list[str]) -> None:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("DELETE FROM dbo.BlockedLooms;")
+            cur.execute("DELETE FROM [UzmanRaporDB].[dbo].[BlockedLooms];")
             for loom in uniq:
-                cur.execute("INSERT INTO dbo.BlockedLooms (LoomNo) VALUES (?);", (loom,))
+                cur.execute("INSERT INTO [UzmanRaporDB].[dbo].[BlockedLooms] (LoomNo) VALUES (?);", (loom,))
             c.commit()
     except Exception:
         pass
@@ -507,7 +507,7 @@ def load_dummy_looms() -> list[str]:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("SELECT LoomNo FROM dbo.DummyLooms ORDER BY LoomNo;")
+            cur.execute("SELECT LoomNo FROM [UzmanRaporDB].[dbo].[DummyLooms] ORDER BY LoomNo;")
             rows = cur.fetchall()
         return [str(r[0]) for r in rows]
     except Exception:
@@ -520,9 +520,9 @@ def save_dummy_looms(items: list[str]) -> None:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("DELETE FROM dbo.DummyLooms;")
+            cur.execute("DELETE FROM [UzmanRaporDB].[dbo].[DummyLooms];")
             for loom in uniq:
-                cur.execute("INSERT INTO dbo.DummyLooms (LoomNo) VALUES (?);", (loom,))
+                cur.execute("INSERT INTO [UzmanRaporDB].[dbo].[DummyLooms] (LoomNo) VALUES (?);", (loom,))
             c.commit()
     except Exception:
         pass
@@ -532,7 +532,7 @@ def load_loom_cut_map() -> dict:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("SELECT LoomNo, CutType FROM dbo.LoomCutMap;")
+            cur.execute("SELECT LoomNo, CutType FROM [UzmanRaporDB].[dbo].[LoomCutMap];")
             rows = cur.fetchall()
         return {str(r[0]): str(r[1]) for r in rows}
     except Exception:
@@ -545,12 +545,12 @@ def save_loom_cut_map(d: dict) -> None:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("DELETE FROM dbo.LoomCutMap;")
+            cur.execute("DELETE FROM [UzmanRaporDB].[dbo].[LoomCutMap];")
             for loom, ctype in d.items():
                 loom_str = str(loom).strip()
                 cut_str = str(ctype).strip()
                 if loom_str and cut_str:
-                    cur.execute("INSERT INTO dbo.LoomCutMap (LoomNo, CutType) VALUES (?, ?);", (loom_str, cut_str))
+                    cur.execute("INSERT INTO [UzmanRaporDB].[dbo].[LoomCutMap] (LoomNo, CutType) VALUES (?, ?);", (loom_str, cut_str))
             c.commit()
     except Exception:
         pass
@@ -560,7 +560,7 @@ def load_type_selvedge_map() -> dict:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("SELECT RootType, Selvedge FROM dbo.TypeSelvedgeMap;")
+            cur.execute("SELECT RootType, Selvedge FROM [UzmanRaporDB].[dbo].[TypeSelvedgeMap];")
             rows = cur.fetchall()
         return {str(r[0]): str(r[1]) for r in rows}
     except Exception:
@@ -573,12 +573,12 @@ def save_type_selvedge_map(d: dict) -> None:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("DELETE FROM dbo.TypeSelvedgeMap;")
+            cur.execute("DELETE FROM [UzmanRaporDB].[dbo].[TypeSelvedgeMap];")
             for root, sel in d.items():
                 root_str = str(root).strip()
                 sel_str = str(sel).strip()
                 if root_str and sel_str:
-                    cur.execute("INSERT INTO dbo.TypeSelvedgeMap (RootType, Selvedge) VALUES (?, ?);", (root_str, sel_str))
+                    cur.execute("INSERT INTO [UzmanRaporDB].[dbo].[TypeSelvedgeMap] (RootType, Selvedge) VALUES (?, ?);", (root_str, sel_str))
             c.commit()
     except Exception:
         pass
@@ -592,7 +592,7 @@ def load_usta_dataframe(sqlite_path: str | None = None) -> pd.DataFrame:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("SELECT Id, Tarih, IsTanimi FROM dbo.UstaDefteri;")
+            cur.execute("SELECT Id, Tarih, IsTanimi FROM [UzmanRaporDB].[dbo].[UstaDefteri];")
             rows = cur.fetchall()
             cols = [d[0] for d in cur.description] if cur.description else ["Id", "Tarih", "IsTanimi"]
             df = pd.DataFrame.from_records(rows, columns=cols)
@@ -616,7 +616,7 @@ def count_usta_between(start_dt: datetime, end_dt: datetime, what: str = "DÜĞ�
         e_date = end_dt.date()
         w = str(what).upper().strip()
 
-        sql = "SELECT COUNT(*) FROM dbo.UstaDefteri WHERE Tarih >= ? AND Tarih < ?"
+        sql = "SELECT COUNT(*) FROM [UzmanRaporDB].[dbo].[UstaDefteri] WHERE Tarih >= ? AND Tarih < ?"
         params: list[object] = [s_date, e_date]
 
         if w:
@@ -651,7 +651,7 @@ def load_usta_etiket_tezgah_map() -> dict[str, str]:
 
     sql = """
     SELECT EtiketNo, Tezgah
-    FROM dbo.UstaDefteri
+    FROM [UzmanRaporDB].[dbo].[UstaDefteri]
     WHERE EtiketNo IS NOT NULL AND LTRIM(RTRIM(EtiketNo)) <> ''
     ORDER BY Id DESC;
     """
@@ -682,7 +682,7 @@ def fetch_tip_buzulme_model(tip_kodlari: list[str]) -> pd.DataFrame:
     chunk = 800
     sql_tpl = """
     SELECT TipKodu, GecmisBuzulme, SistemBuzulme, GuvenAraligi
-    FROM dbo.TipBuzulmeModel
+    FROM [UzmanRaporDB].[dbo].[TipBuzulmeModel]
     WHERE TipKodu IN ({})
     """
 

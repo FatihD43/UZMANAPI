@@ -123,7 +123,7 @@ def _merge_settings(
 
 def _fetch_itema_ayar_by_tip(conn: ConnectionLike, tip: str) -> Optional[Dict[str, Optional[str]]]:
     cur = conn.cursor()
-    cur.execute("SELECT TOP 1 * FROM dbo.ItemaAyar WHERE [tip] = ?", [tip])
+    cur.execute("SELECT TOP 1 * FROM [UzmanRaporDB].[dbo].[ItemaAyar] WHERE [tip] = ?", [tip])
     row = cur.fetchone()
     if not row:
         return None
@@ -136,8 +136,8 @@ def get_itema_settings_from_feature_tables(
     tip_features: Optional[Dict[str, Optional[str]]],
 ) -> Optional[Dict[str, Optional[str]]]:
     """
-    1) Önce dbo.ItemaAyar (manuel/override) aranır.
-    2) Yoksa mevcut sistemindeki eşleştirme mantığıyla dbo.Makine_Ayar_Tablosu vb. bulunur.
+    1) Önce [UzmanRaporDB].[dbo].[ItemaAyar] (manuel/override) aranır.
+    2) Yoksa mevcut sistemindeki eşleştirme mantığıyla [UzmanRaporDB].[dbo].[Makine_Ayar_Tablosu] vb. bulunur.
        (Bu kısım senin sisteminde şu an çalışıyor dediğin için dokunulmuyor.)
     """
     row = _fetch_itema_ayar_by_tip(conn, tip)
@@ -185,7 +185,7 @@ def build_itema_settings(
     settings["tip"] = tip
     settings = _merge_settings(settings, DEFAULT_ITEMA_SETTINGS)
 
-    # 1) Önce manuel tablo (dbo.ItemaAyar) veya senin feature-table eşleştirmen
+    # 1) Önce manuel tablo ([UzmanRaporDB].[dbo].[ItemaAyar]) veya senin feature-table eşleştirmen
     table_settings = get_itema_settings_from_feature_tables(conn, tip, tip_features)
     if table_settings:
         return _merge_settings(settings, table_settings)
