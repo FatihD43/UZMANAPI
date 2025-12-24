@@ -29,7 +29,7 @@ class ApiConnection:
         timeout: int = 30,
         token: Optional[str] = None,
     ) -> None:
-        self.base_url = (base_url or _env("UZMANRAPOR_API_URL", "http://localhost:8000")).rstrip("/")
+        self.base_url = (base_url or _env("UZMANRAPOR_API_URL", "http://10.30.1.68:8000")).rstrip("/")
         raw_endpoint = endpoint or _env("UZMANRAPOR_SQL_ENDPOINT", "/sql")
         self.endpoint = raw_endpoint if raw_endpoint.startswith("/") else f"/{raw_endpoint}"
         self.timeout = timeout
