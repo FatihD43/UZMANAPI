@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 from typing import Dict, Optional
 
 import pandas as pd
-from PySide6.QtCore import Qt, QMarginsF
-from PySide6.QtGui import QPainter, QPageSize, QPageLayout
+from PySide6.QtCore import Qt, QMarginsF, QRect, QDateTime
+from PySide6.QtGui import QPainter, QPageSize, QPageLayout, QPixmap, QFont
 from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import (
     QWidget,
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QInputDialog,
     QSizePolicy,
+    QApplication,
 )
 
 from app.itema_settings import build_itema_settings, ITEMA_COLUMNS, ConnectionLike
@@ -30,10 +33,9 @@ class ItemaAyarTab(QWidget):
     """
     Excel'deki ITEMA_AYAR_FORMU sayfasına benzer yeni sekme.
     Tip kodu girilip 'Otomatik Ayarları Getir' denildiğinde:
-      - Varsayılan ayarlar
-      - Otomatik ayarlar (sp_ItemaOtomatikAyar)
-      - Tip-özel ayarlar (sp_ItemaTipOzelAyar)
-    birleştirilerek arayüz alanlarına yazılır.
+      - Önce dbo.ItemaAyar (manuel)
+      - Yoksa dbo.Makine_Ayar_Tablosu (feature eşleştirme)
+    ayarları arayüz alanlarına yazar.
     """
 
     def __init__(self, parent=None):
@@ -66,7 +68,7 @@ class ItemaAyarTab(QWidget):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(8)
 
-        # ÜST BAR: Tip gir + buton
+        # ÜST BAR
         top = QHBoxLayout()
         top.setSpacing(8)
 
@@ -93,7 +95,7 @@ class ItemaAyarTab(QWidget):
         top.addStretch(1)
         main_layout.addLayout(top)
 
-        # ALANLAR: scroll içinde form
+        # ALANLAR
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setObjectName("ItemaScroll")
@@ -103,7 +105,6 @@ class ItemaAyarTab(QWidget):
         inner = QWidget()
         inner.setObjectName("ItemaInner")
 
-        # Dikey sığdırma için KOMPAKT layout
         inner_layout = QVBoxLayout(inner)
         inner_layout.setContentsMargins(6, 6, 6, 6)
         inner_layout.setSpacing(6)
@@ -111,12 +112,10 @@ class ItemaAyarTab(QWidget):
         inner_layout.addWidget(self._build_header_box())
         inner_layout.addWidget(self._build_body_box())
         inner_layout.addWidget(self._build_footer_box())
-        # Dikeyde boşluk uzatmasın diye stretch eklemiyoruz
 
         scroll.setWidget(inner)
-        self._print_widget = inner  # yazdırma için en doğru hedef
+        self._print_widget = inner  # yazdırma hedefi
 
-        # Gövdeyi iki kolon gibi yap: sol form, sağ boş alan
         body = QHBoxLayout()
         body.setSpacing(12)
 
@@ -139,14 +138,9 @@ class ItemaAyarTab(QWidget):
         self._left_panel = left_panel
         self._right_panel = right_panel
 
-        # İlk açılışta yarım genişliğe oturt
         self._apply_half_width()
 
     def _apply_style(self) -> None:
-        """
-        Mavi-beyaz tema + kompakt dikey görünüm (baz).
-        Kompakt seviyeleri ayrıca _apply_compact_by_height() ile dinamik eklenir.
-        """
         self.setStyleSheet(
             """
             QWidget#ItemaLeftPanel {
@@ -248,12 +242,6 @@ class ItemaAyarTab(QWidget):
         )
 
     def _apply_compact_by_height(self) -> None:
-        """
-        Pencere yüksekliği küçükse formun dikey ölçülerini otomatik sıkıştırır.
-        0: normal
-        1: kompakt (genelde 900px altı)
-        2: ultra (genelde 780px altı)
-        """
         h = self.height()
 
         level = 0
@@ -267,7 +255,6 @@ class ItemaAyarTab(QWidget):
 
         self._compact_level = level
 
-        # Stil parametreleri
         if level == 0:
             le_pad = "3px 6px"
             le_min_h = "22px"
@@ -293,14 +280,12 @@ class ItemaAyarTab(QWidget):
             inner_margins = (4, 4, 4, 4)
             inner_spacing = 4
 
-        # Inner layout margin/spacing güncelle (varsa)
         if self._print_widget is not None:
             lay = self._print_widget.layout()
             if lay is not None:
                 lay.setContentsMargins(*inner_margins)
                 lay.setSpacing(inner_spacing)
 
-        # Baz stil + kompakt override ekle (tema bozulmasın)
         base = self.styleSheet()
         compact_qss = f"""
         QGroupBox {{ margin-top: {gb_margin_top}; }}
@@ -310,12 +295,8 @@ class ItemaAyarTab(QWidget):
         QPushButton#ItemaSecondaryButton,
         QPushButton#ItemaWarnButton {{ padding: {btn_pad}; }}
         """
-        # Aynı override tekrar tekrar eklenmesin diye en pratik yol: base'e eklemeden önce
-        # önceki compact bloklarını kabaca ayıklamak zor; burada minimal riskle ekliyoruz.
-        # Çünkü level değiştikçe yeniden set edilecek ve en alttaki selector geçerli olacak.
         self.setStyleSheet(base + compact_qss)
 
-        # Layout yeniden hesap
         self.updateGeometry()
         if self._print_widget is not None:
             self._print_widget.adjustSize()
@@ -328,11 +309,13 @@ class ItemaAyarTab(QWidget):
     def _apply_half_width(self) -> None:
         if not self._left_panel:
             return
-        # Sekme genişliğinin %50'si. Çok dar ekranlarda kullanılabilirlik için min 520 px.
         w = self.width()
         target = max(520, int(w * 0.50))
         self._left_panel.setFixedWidth(target)
 
+    # ------------------------------------------------------------------
+    # UI BOXES
+    # ------------------------------------------------------------------
     def _build_header_box(self) -> QGroupBox:
         box = QGroupBox("Ürün / Tip Bilgileri")
         layout = QGridLayout(box)
@@ -348,7 +331,6 @@ class ItemaAyarTab(QWidget):
             layout.addWidget(edit, row, col + 1)
             (self._dynamic_fields if dynamic else self._fields)[key] = edit
 
-        # --- Genel bilgiler (iki blok: sol 0-1, sağ 2-3) ---
         add("Tip Kodu", "tip", 0, 0)
         add("Kök Tip", "kok_tip", 0, 2)
 
@@ -367,14 +349,12 @@ class ItemaAyarTab(QWidget):
         add("Çerçeve Adedi", "cerceve_adedi", 5, 0)
         add("Kenar Çerçeve", "kenar_cerceve", 5, 2)
 
-        # --- ÇÖZGÜ (2x2 düzen) ---
         add("Çözgü 1", "cozgu1", 6, 0)
         add("Çözgü 3", "cozgu3", 6, 2)
 
         add("Çözgü 2", "cozgu2", 7, 0)
         add("Çözgü 4", "cozgu4", 7, 2)
 
-        # --- ATKI + ATIM sağa hizalı ---
         add("Atkı 1", "atki1", 8, 0)
         add("Atkı1 Atım", "atki1_atim", 8, 2)
 
@@ -434,10 +414,11 @@ class ItemaAyarTab(QWidget):
         add_row("Testere Yükseklik", "testere_yuk", "Tansiyon Yay Pozisyonu", "tan_yay_pozisyon")
         add_row("Tansiyon Yay Yüksekliği", "tan_yay_yukseklik", "Tansiyon Yay Konumu", "tan_yay_konumu")
         add_row("Yay Boğumu", "tan_yay_bogumu", "Zemin Ağızlık", "zem_agizlik")
+
+        # Bu 4 alan sizde Makine_Ayar_Tablosu'nda var ve geri gelmeli:
         add_row("Kapanma Dur 1", "kapanma_dur_1", "Oturma Düzeyi 1", "oturma_duzeyi_1")
         add_row("Kapanma Dur 2", "kapanma_dur_2", "Oturma Düzeyi 2", "oturma_duzeyi_2")
 
-        # Motor rampaları (tek sıra)
         ramp_box = QGroupBox("Motor Rampaları")
         ramp_grid = QGridLayout(ramp_box)
         ramp_grid.setVerticalSpacing(4)
@@ -483,20 +464,20 @@ class ItemaAyarTab(QWidget):
 
         return box
 
+    # ------------------------------------------------------------------
+    # FORM TEMİZLE
+    # ------------------------------------------------------------------
     def _clear_form(self, keep_tip: Optional[str] = None) -> None:
-        # Dinamik alanlar (header)
         for _, w in self._dynamic_fields.items():
             w.blockSignals(True)
             w.setText("")
             w.blockSignals(False)
 
-        # Makine alanları + notlar
         for _, w in self._fields.items():
             w.blockSignals(True)
             w.setText("")
             w.blockSignals(False)
 
-        # Tip kalsın istiyorsan
         if keep_tip:
             if "tip" in self._dynamic_fields:
                 self._dynamic_fields["tip"].setText(keep_tip)
@@ -505,7 +486,7 @@ class ItemaAyarTab(QWidget):
         self._last_tip_features = {}
 
     # ------------------------------------------------------------------
-    # LOGİK: AYAR ÇEKME
+    # AYAR ÇEKME
     # ------------------------------------------------------------------
     def _on_fetch_clicked(self):
         tip_raw = (self.ed_tip.text() or "").strip()
@@ -515,13 +496,11 @@ class ItemaAyarTab(QWidget):
 
         tip = tip_raw.upper()
 
-        # >>> KRİTİK: HER FETCH'TE ÖNCE FORMU TEMİZLE <<<
+        # her fetch'te temizle
         self._clear_form(keep_tip=tip)
 
-        # Dinamik rapordaki verileri başlık alanlarına taşı
         tip_features = self._populate_from_dynamic(tip)
 
-        # Dinamik raporda tip yoksa: form zaten temiz; uyar
         if not tip_features or len(tip_features.keys()) <= 1:
             QMessageBox.information(
                 self,
@@ -547,29 +526,30 @@ class ItemaAyarTab(QWidget):
             except Exception:
                 pass
 
-        if not settings:
-            QMessageBox.information(
-                self,
-                "Bilgi",
-                f"{tip} tipi için ayar kağıdı bulunamadı. Form temizlendi."
-            )
-            return
-
-        # Alanlara yaz (makine ayarları vb.)
+        # Makine ayarları (bulunmadıysa None -> boş)
         for key, widget in self._fields.items():
             widget.setText(settings.get(key) or "")
 
-        # Başlık/dinamik alanlar (tip, kök tip vb.)
+        # Başlık alanları: populate_from_dynamic zaten doldurdu; settings'te varsa overwrite edebilir
         for key, widget in self._dynamic_fields.items():
             val = settings.get(key)
             if val is None:
                 continue
             widget.setText(str(val))
 
-        QMessageBox.information(self, "Tamam", f"{tip} tipi için otomatik ITEMA ayarları getirildi.")
+        # Eşleşme yoksa makine ayarları boş kalır; net bilgi verelim
+        any_machine = any((settings.get(k) or "").strip() for k in self._fields.keys())
+        if not any_machine:
+            QMessageBox.information(
+                self,
+                "Bilgi",
+                f"{tip} için Makine_Ayar_Tablosu / ItemaAyar eşleşmesi bulunamadı. Makine ayarları boş bırakıldı."
+            )
+        else:
+            QMessageBox.information(self, "Tamam", f"{tip} tipi için ITEMA ayarları getirildi.")
 
     # ------------------------------------------------------------------
-    # Dinamik rapordan başlık bilgilerini doldurma
+    # Dinamik rapordan başlık bilgileri
     # ------------------------------------------------------------------
     def _populate_from_dynamic(self, tip: str) -> Dict[str, Optional[str]]:
         win = self.window()
@@ -585,7 +565,6 @@ class ItemaAyarTab(QWidget):
         if "tip" in self._dynamic_fields:
             self._dynamic_fields["tip"].setText(norm_tip)
 
-        # Tip satırını bul
         candidates = []
         for col in ["Mamul Tip Kodu", "Tip Kodu", "Tip", "Kök Tip Kodu"]:
             if col in df.columns:
@@ -615,7 +594,6 @@ class ItemaAyarTab(QWidget):
             if w is not None:
                 w.setText(str(value))
 
-        # Mapping
         set_dyn("kok_tip", get_first("Kök Tip Kodu", "Kok Tip Kodu", "KökTip"))
         set_dyn("tarak_grubu", get_first("Tarak Grubu", "Tarak"))
         set_dyn("zemin_orgu", get_first("Zemin Örgü", "Zemin Orgu"))
@@ -654,7 +632,7 @@ class ItemaAyarTab(QWidget):
         return tip_features
 
     # ------------------------------------------------------------------
-    # MANUEL KAYIT
+    # MANUEL KAYIT (API 403'ten kaçınmak için IF/BEGIN yok)
     # ------------------------------------------------------------------
     def _on_manual_save(self):
         pwd, ok = QInputDialog.getText(
@@ -686,7 +664,6 @@ class ItemaAyarTab(QWidget):
             **{k: f.text() for k, f in self._dynamic_fields.items()},
         }
 
-        # header'daki Tarak Grubu -> SQL kolon adı "tarak"
         tg = self._dynamic_fields.get("tarak_grubu")
         if tg and tg.text().strip():
             data["tarak"] = tg.text().strip()
@@ -707,44 +684,32 @@ class ItemaAyarTab(QWidget):
     def _save_manual_settings(self, conn: ConnectionLike, values: Dict[str, str]) -> None:
         table = "[UzmanRaporDB].[dbo].[ItemaAyar]"
 
-        # sira_no identity => asla insert/update listesine koyma
         cols = [c for c in ITEMA_COLUMNS if c.lower() != "sira_no"]
-
         tip_val = (values.get("tip") or "").strip().upper()
         if not tip_val:
             raise ValueError("Tip boş olamaz.")
 
-        set_cols = [c for c in cols if c.lower() != "tip"]
-
-        update_set_sql = ", ".join([f"[{c}] = ?" for c in set_cols])
-        insert_cols_sql = ", ".join([f"[{c}]" for c in cols])
-        insert_placeholders = ", ".join(["?"] * len(cols))
-
-        update_params = [(values.get(c) or None) for c in set_cols]
-        insert_params = [(values.get(c) or None) for c in cols]
-
-        sql = f"""
-        IF EXISTS (SELECT 1 FROM {table} WHERE [tip] = ?)
-        BEGIN
-            UPDATE {table}
-            SET {update_set_sql}
-            WHERE [tip] = ?;
-        END
-        ELSE
-        BEGIN
-            INSERT INTO {table} ({insert_cols_sql})
-            VALUES ({insert_placeholders});
-        END
-        """
-
-        exec_params = [tip_val, *update_params, tip_val, *insert_params]
-
+        # önce var mı?
         cur = conn.cursor()
-        cur.execute(sql, exec_params)
+        cur.execute(f"SELECT TOP 1 1 FROM {table} WHERE [tip] = ?", [tip_val])
+        exists = cur.fetchone() is not None
+
+        if exists:
+            set_cols = [c for c in cols if c.lower() != "tip"]
+            update_set_sql = ", ".join([f"[{c}] = ?" for c in set_cols])
+            params = [(values.get(c) or None) for c in set_cols]
+            params.append(tip_val)
+            cur.execute(f"UPDATE {table} SET {update_set_sql} WHERE [tip] = ?", params)
+        else:
+            insert_cols_sql = ", ".join([f"[{c}]" for c in cols])
+            insert_placeholders = ", ".join(["?"] * len(cols))
+            params = [(values.get(c) or None) for c in cols]
+            cur.execute(f"INSERT INTO {table} ({insert_cols_sql}) VALUES ({insert_placeholders})", params)
+
         conn.commit()
 
     # ------------------------------------------------------------------
-    # A4 ÇIKTI (YAZICIYA GÖNDER) - TEK SAYFAYA SIĞDIR
+    # A4 ÇIKTI (ITEMA logosu yok, sayfaya daha dolu sığdırma)
     # ------------------------------------------------------------------
     def _print_form(self):
         target = self._print_widget or (self._left_panel if self._left_panel else self)
@@ -752,18 +717,40 @@ class ItemaAyarTab(QWidget):
             QMessageBox.warning(self, "Çıktı", "Yazdırılacak alan bulunamadı.")
             return
 
-        # Layout hesapları güncel olsun
+        def _asset_path(rel: str) -> str:
+            base = getattr(sys, "_MEIPASS", None)
+            if base:
+                p = Path(base) / "assets" / rel
+                if p.exists():
+                    return str(p)
+
+            if getattr(sys, "frozen", False):
+                exe_dir = Path(sys.executable).resolve().parent
+                p = exe_dir / "assets" / rel
+                if p.exists():
+                    return str(p)
+
+            here = Path(__file__).resolve().parent
+            p = here.parent / "assets" / rel
+            if p.exists():
+                return str(p)
+            p = here / "assets" / rel
+            return str(p)
+
+        # Layout güncelle
         target.adjustSize()
+        target.repaint()
+        QApplication.processEvents()
 
         printer = QPrinter(QPrinter.HighResolution)
         printer.setOutputFormat(QPrinter.NativeFormat)
 
-        # A4 + Portrait + margin (mm)
+        # marginleri küçült: içerik büyüsün
         page_size = QPageSize(QPageSize.PageSizeId.A4)
         page_layout = QPageLayout(
             page_size,
             QPageLayout.Orientation.Portrait,
-            QMarginsF(10, 10, 10, 10),  # mm
+            QMarginsF(6, 6, 6, 6),  # mm (daha dolu görünür)
             QPageLayout.Unit.Millimeter,
         )
         printer.setPageLayout(page_layout)
@@ -782,36 +769,81 @@ class ItemaAyarTab(QWidget):
             painter.setRenderHint(QPainter.Antialiasing, True)
             painter.setRenderHint(QPainter.TextAntialiasing, True)
 
-            # Yazdırılabilir alan (pixel)
             page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
 
-            # Gerçek içerik boyutu: adjustSize sonrası target.size() en güvenlisi
-            src_size = target.size()
-            if src_size.width() <= 0 or src_size.height() <= 0:
-                src_size = target.sizeHint()
+            # Header/footer daha küçük -> form alanı büyüsün
+            header_h = max(70, int(page_rect.height() * 0.11))
+            footer_h = max(24, int(page_rect.height() * 0.04))
 
-            if src_size.width() <= 0 or src_size.height() <= 0:
-                QMessageBox.warning(self, "Çıktı", "Form ölçüsü okunamadı.")
+            header_rect = QRect(page_rect.left(), page_rect.top(), page_rect.width(), header_h)
+            footer_rect = QRect(page_rect.left(), page_rect.bottom() - footer_h, page_rect.width(), footer_h)
+            content_rect = QRect(
+                page_rect.left(),
+                page_rect.top() + header_h,
+                page_rect.width(),
+                page_rect.height() - header_h - footer_h,
+            )
+
+            pad = 10
+
+            # --- SADECE ISKO LOGO (sol) ---
+            isko_pm = QPixmap(_asset_path("isko_logo.png"))
+            if not isko_pm.isNull():
+                logo_box_h = int((header_h - 2 * pad) * 0.78)
+                logo_box_w = int(page_rect.width() * 0.25)
+                isko_scaled = isko_pm.scaled(
+                    logo_box_w, logo_box_h,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+                painter.drawPixmap(
+                    header_rect.left() + pad,
+                    header_rect.top() + (header_h - isko_scaled.height()) // 2,
+                    isko_scaled,
+                )
+
+            # --- Başlık ---
+            title_font = QFont()
+            title_font.setBold(True)
+            title_font.setPointSize(16)
+            painter.setFont(title_font)
+            painter.drawText(header_rect.adjusted(0, 0, 0, 0), Qt.AlignCenter, "AYAR FORMU")
+
+            painter.drawLine(header_rect.left(), header_rect.bottom(), header_rect.right(), header_rect.bottom())
+
+            # --- Formu grab alıp içerik alanına maksimum sığdır ---
+            form_pm = target.grab()
+            if form_pm.isNull() or form_pm.width() <= 0 or form_pm.height() <= 0:
+                QMessageBox.warning(self, "Çıktı", "Form görüntüsü alınamadı (grab boş).")
                 return
 
-            # Ölçek: sayfaya sığdır (aspect ratio koru)
-            sx = page_rect.width() / float(src_size.width())
-            sy = page_rect.height() / float(src_size.height())
+            if form_pm.hasAlphaChannel():
+                bg = QPixmap(form_pm.size())
+                bg.fill(Qt.white)
+                p2 = QPainter(bg)
+                p2.drawPixmap(0, 0, form_pm)
+                p2.end()
+                form_pm = bg
+
+            sx = content_rect.width() / float(form_pm.width())
+            sy = content_rect.height() / float(form_pm.height())
             scale = min(sx, sy)
 
-            # Ortala
-            new_w = int(src_size.width() * scale)
-            new_h = int(src_size.height() * scale)
-            x_off = page_rect.x() + max(0, (page_rect.width() - new_w) // 2)
-            y_off = page_rect.y() + max(0, (page_rect.height() - new_h) // 2)
+            out_w = max(1, int(form_pm.width() * scale))
+            out_h = max(1, int(form_pm.height() * scale))
+            form_scaled = form_pm.scaled(out_w, out_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-            painter.translate(x_off, y_off)
-            painter.scale(scale, scale)
+            x_off = content_rect.left() + max(0, (content_rect.width() - form_scaled.width()) // 2)
+            y_off = content_rect.top() + max(0, (content_rect.height() - form_scaled.height()) // 2)
 
-            # PySide6 doğru imza: renderFlags parametresi
-            target.render(
-                painter,
-                renderFlags=QWidget.RenderFlag.DrawWindowBackground | QWidget.RenderFlag.DrawChildren,
-            )
+            painter.drawPixmap(x_off, y_off, form_scaled)
+
+            # --- Sağ alt tarih ---
+            dt = QDateTime.currentDateTime().toString("dd.MM.yyyy HH:mm")
+            foot_font = QFont()
+            foot_font.setPointSize(9)
+            painter.setFont(foot_font)
+            painter.drawText(footer_rect.adjusted(0, 0, -pad, 0), Qt.AlignRight | Qt.AlignVCenter, dt)
+
         finally:
             painter.end()

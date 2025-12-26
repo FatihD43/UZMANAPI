@@ -753,11 +753,12 @@ class MainWindow(QMainWindow):
         )  # on_list_made kaldırıldı
 
         if dlg.exec():
-            # Genel görünüme dön + snapshot
             self._apply_notes_and_autonotes()
             self._refresh_dugum_view()
             storage.save_df_snapshot(self.df_dinamik_full, "dinamik")
+            storage.save_df_snapshot(self.df_running, "running")  # <-- EKLE
             self._refresh_kusbakisi()
+
     # -------------------------
     # YAPAY ZEKA PLANLAMA (İSKELET)
     # -------------------------
@@ -817,6 +818,13 @@ class MainWindow(QMainWindow):
         self._apply_notes_and_autonotes()
         self._refresh_dugum_view()
         storage.save_df_snapshot(self.df_dinamik_full, "dinamik")
+        # AI planlama tamamlandıktan sonra:
+        self._did_planlama = True
+        self._update_freshness_if_ready()
+
+        storage.save_df_snapshot(self.df_dinamik_full, "dinamik")
+        storage.save_df_snapshot(self.df_running, "running")
+
         self._refresh_kusbakisi()
 
         QMessageBox.information(

@@ -3,16 +3,13 @@ from __future__ import annotations
 import base64
 import os
 import re
-from typing import Any, Iterable
+from typing import Any
 
 import pyodbc
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-
 app = FastAPI(title="UzmanRapor API", version="1.0")
-
-
 
 
 class SqlRequest(BaseModel):
@@ -24,7 +21,10 @@ def _env(name: str, default: str = "") -> str:
     v = os.getenv(name)
     return v.strip() if v else default
 
+
 MAX_ROWS = int(_env("UZMANRAPOR_MAX_ROWS", "20000"))
+
+
 def _require_token(x_token: str | None) -> None:
     expected = _env("UZMANRAPOR_API_TOKEN", "").strip()
 
@@ -34,7 +34,6 @@ def _require_token(x_token: str | None) -> None:
 
     if not x_token or x_token != expected:
         raise HTTPException(status_code=401, detail="Unauthorized")
-
 
 
 def _sql_conn_str() -> str:
@@ -71,13 +70,12 @@ def _sql_conn_str() -> str:
 _FORBIDDEN = re.compile(
     r"\b("
     r"create|alter|drop|truncate|grant|revoke|"
-    r"merge|if|begin|end|declare|set|while|"
+    r"merge|if|begin|end|declare|while|"
     r"use|go|"
     r"xp_|sp_configure|openrowset|openquery"
     r")\b",
     re.IGNORECASE,
 )
-
 
 _DB_NAME = os.getenv("UZMANRAPOR_SQL_DATABASE", "UzmanRaporDB").strip() or "UzmanRaporDB"
 
@@ -90,6 +88,7 @@ _ALLOWED_TABLES = {
     "ItemaAyar",
     "LoomCutMap",
     "Makine_Ayar_Tablosu",
+    "NoteRules",
     "Snapshots",
     "TipBuzulmeModel",
     "TypeSelvedgeMap",
@@ -122,8 +121,12 @@ def _validate_query(query: str) -> None:
     if not q:
         raise HTTPException(status_code=400, detail="Empty query")
 
+    if q.endswith(";"):
+        q = q[:-1].rstrip()
+
     if _FORBIDDEN.search(q):
         raise HTTPException(status_code=403, detail="Forbidden SQL keyword")
+
     if ";" in q:
         raise HTTPException(status_code=403, detail="Multiple statements are not allowed")
 
@@ -141,6 +144,7 @@ def _validate_query(query: str) -> None:
             objs.add(f"{db}.dbo.{table}")
         else:
             objs.add(f"dbo.{table}")
+
     for obj in objs:
         if obj not in _ALLOWED_OBJECTS and obj not in _ALLOWED_PROCS:
             raise HTTPException(status_code=403, detail=f"Object not allowed: {obj}")
@@ -149,6 +153,7 @@ def _validate_query(query: str) -> None:
         m = _EXEC_REF.search(q)
         if not m:
             raise HTTPException(status_code=403, detail="EXEC only allowed for dbo stored procedures")
+
         db = m.group("db")
         proc = m.group("proc")
         if db:
@@ -190,42 +195,46 @@ def health() -> dict[str, str]:
 
 @app.post("/sql")
 def sql(req: SqlRequest, x_token: str | None = Header(default=None)) -> dict[str, Any]:
-    _require_token(x_token)
-    _validate_query(req.query)
-
     conn_str = _sql_conn_str()
     params = _adapt_params(req.query, list(req.params or []))
 
+    conn = None
     try:
+        _require_token(x_token)
+        _validate_query(req.query)
+
         conn = pyodbc.connect(conn_str, timeout=10)
         cur = conn.cursor()
         cur.execute(req.query, params)
 
-        # SELECT / WITH: description dolu olur
         if cur.description:
             cols = [d[0] for d in cur.description]
-
-            # Büyük result-set'lerde API'nin kilitlenmesini önlemek için limit uygula
             rows = cur.fetchmany(MAX_ROWS + 1)
             if len(rows) > MAX_ROWS:
                 raise HTTPException(
                     status_code=413,
                     detail=f"Result too large (>{MAX_ROWS} rows). Please add filters.",
                 )
-
             data_rows = [[_encode_value(v) for v in row] for row in rows]
             return {"columns": cols, "rows": data_rows, "rowcount": len(data_rows)}
 
-        else:
-            conn.commit()
-            rc = cur.rowcount if cur.rowcount is not None else -1
-            return {"columns": [], "rows": [], "affected_rows": rc}
-    except HTTPException:
+        conn.commit()
+        rc = cur.rowcount if cur.rowcount is not None else -1
+        return {"columns": [], "rows": [], "affected_rows": rc}
+
+    except HTTPException as e:
+        if e.status_code == 403:
+            print("[403 FORBIDDEN SQL]", req.query.strip().replace("\n", " ")[:200])
+            print("[403 DETAIL]", e.detail)
         raise
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
     finally:
         try:
-            conn.close()
+            if conn is not None:
+                conn.close()
         except Exception:
             pass
+

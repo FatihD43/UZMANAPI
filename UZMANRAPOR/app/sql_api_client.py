@@ -89,7 +89,11 @@ class ApiCursor:
         self.rowcount: int = -1
 
     def execute(self, query: str, params: Optional[Iterable[Any]] = None) -> "ApiCursor":
-        payload = {"query": query, "params": list(params or [])}
+        q = (query or "").strip()
+        if q.endswith(";"):
+            q = q[:-1].rstrip()  # sadece sondaki ; temizlensin
+
+        payload = {"query": q, "params": list(params or [])}
         data = self._conn._request(payload)
 
         rows = data.get("rows")

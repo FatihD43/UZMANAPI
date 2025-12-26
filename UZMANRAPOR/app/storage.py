@@ -59,33 +59,37 @@ def _meta_get(key: str) -> str | None:
 
 
 def _meta_set(key: str, value: str | None) -> None:
-    """
-    MERGE yasak olduğu için UPSERT:
-      1) UPDATE
-      2) etkilenen satır yoksa INSERT
-    """
     _ensure_meta_table()
     try:
         with _sql_conn() as c:
             cur = c.cursor()
 
+            # 1) Önce UPDATE dene
             cur.execute(
-                "UPDATE [UzmanRaporDB].[dbo].[AppMeta] SET MetaValue = ?, UpdatedAt = SYSUTCDATETIME() WHERE MetaKey = ?;",
+                "UPDATE [UzmanRaporDB].[dbo].[AppMeta] "
+                "SET MetaValue = ?, UpdatedAt = SYSUTCDATETIME() "
+                "WHERE MetaKey = ?",
                 (value, key),
             )
 
-            # ApiCursor.rowcount server'dan geliyorsa kullanır; gelmiyorsa -1 olabilir.
-            rc = getattr(cur, "rowcount", -1)
+            # 2) Rowcount API’de güvenilir olmayabilir; var mı diye kontrol et
+            cur.execute(
+                "SELECT COUNT(*) FROM [UzmanRaporDB].[dbo].[AppMeta] WHERE MetaKey = ?",
+                (key,),
+            )
+            cnt = cur.fetchone()[0] if cur.fetchone is not None else 0
 
-            if rc == 0:
+            if cnt == 0:
                 cur.execute(
-                    "INSERT INTO [UzmanRaporDB].[dbo].[AppMeta] (MetaKey, MetaValue, UpdatedAt) VALUES (?, ?, SYSUTCDATETIME());",
+                    "INSERT INTO [UzmanRaporDB].[dbo].[AppMeta] (MetaKey, MetaValue, UpdatedAt) "
+                    "VALUES (?, ?, SYSUTCDATETIME())",
                     (key, value),
                 )
 
             c.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[APPMETA] yazma hatası: {e!r}")
+
 
 
 # ============================================================
@@ -382,8 +386,8 @@ def load_users() -> list[dict]:
                     else str(created_at),
                 }
             )
-    except Exception:
-        pass
+    except Exception as e:
+        print("[load_users] ERROR:", e)
 
     return users
 
@@ -573,15 +577,37 @@ def save_type_selvedge_map(d: dict) -> None:
     try:
         with _sql_conn() as c:
             cur = c.cursor()
-            cur.execute("DELETE FROM [UzmanRaporDB].[dbo].[TypeSelvedgeMap];")
+
             for root, sel in d.items():
-                root_str = str(root).strip()
+                root_str = str(root).strip().upper()
                 sel_str = str(sel).strip()
-                if root_str and sel_str:
-                    cur.execute("INSERT INTO [UzmanRaporDB].[dbo].[TypeSelvedgeMap] (RootType, Selvedge) VALUES (?, ?);", (root_str, sel_str))
+                if not root_str or not sel_str:
+                    continue
+
+                # UPDATE dene
+                cur.execute(
+                    "UPDATE [UzmanRaporDB].[dbo].[TypeSelvedgeMap] "
+                    "SET Selvedge = ? "
+                    "WHERE RootType = ?",
+                    (sel_str, root_str),
+                )
+
+                # Var mı kontrol et; yoksa INSERT
+                cur.execute(
+                    "SELECT COUNT(*) FROM [UzmanRaporDB].[dbo].[TypeSelvedgeMap] WHERE RootType = ?",
+                    (root_str,),
+                )
+                cnt = cur.fetchone()[0]
+                if cnt == 0:
+                    cur.execute(
+                        "INSERT INTO [UzmanRaporDB].[dbo].[TypeSelvedgeMap] (RootType, Selvedge) VALUES (?, ?)",
+                        (root_str, sel_str),
+                    )
+
             c.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[TypeSelvedgeMap] yazma hatası: {e!r}")
+
 
 
 # ============================================================

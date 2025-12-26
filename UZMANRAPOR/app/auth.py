@@ -1,5 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import base64
+import re
 from typing import Iterable, Optional
 
 from app import storage
@@ -58,17 +60,17 @@ def authenticate(username: str, password: str) -> Optional[User]:
         if rec_username.lower() != username.lower():
             continue
 
-        salt = rec.get("salt")
-        password_hash = rec.get("password_hash")
+        salt = _normalize_hash_piece(rec.get("salt"))
+        password_hash = _normalize_hash_piece(rec.get("password_hash"))
         password_plain = rec.get("password")
 
         valid = False
         if password_hash:
             if salt:
-                valid = _check_password(password, str(salt), str(password_hash))
+                valid = _check_password(password, salt, password_hash)
             else:
                 # Bazı eski kayıtlar yalnızca şifreyi düz metin saklıyor olabilir.
-                valid = password == str(password_hash)
+                valid = _normalize_hash_piece(password) == password_hash
         elif password_plain is not None:
             valid = password == str(password_plain)
 
@@ -105,11 +107,58 @@ def list_users() -> list[User]:
 def _check_password(candidate: str, salt: str, expected_hash: str) -> bool:
     """Compare the given password against the stored hash, tolerating missing helpers."""
 
+    salt = _normalize_hash_piece(salt)
+    expected_hash = _normalize_hash_piece(expected_hash)
     hash_fn = getattr(storage, "hash_password", None)
     if callable(hash_fn):
         try:
-            return hash_fn(candidate, salt) == expected_hash
+            return _normalize_hash_piece(hash_fn(candidate, salt)) == expected_hash
         except Exception:
             return False
     # Fallback: treat stored value as plain text if hashing helper is unavailable.
-    return candidate == expected_hash
+    return _normalize_hash_piece(candidate) == expected_hash
+
+
+def _normalize_hash_piece(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = value.decode("utf-8")
+        except Exception:
+            return value.hex().lower()
+    text = str(value).strip()
+    if text.startswith(("0x", "0X")):
+        return text[2:].strip().lower()
+    if re.fullmatch(r"[0-9a-fA-F]+", text):
+        return text.lower()
+    if _looks_like_base64(text):
+        decoded = _decode_base64(text)
+        if decoded is not None:
+            hex_candidate = _bytes_to_hex_or_ascii(decoded)
+            return hex_candidate
+    return text.lower()
+def _looks_like_base64(text: str) -> bool:
+    if not text or len(text) % 4 != 0:
+        return False
+    return re.fullmatch(r"[A-Za-z0-9+/=]+", text) is not None
+
+
+def _decode_base64(text: str) -> bytes | None:
+    try:
+        return base64.b64decode(text, validate=True)
+    except Exception:
+        return None
+
+
+def _bytes_to_hex_or_ascii(data: bytes) -> str:
+    try:
+        decoded = data.decode("utf-8")
+    except Exception:
+        return data.hex().lower()
+    decoded = decoded.strip()
+    if re.fullmatch(r"[0-9a-fA-F]+", decoded):
+        return decoded.lower()
+    return data.hex().lower()
